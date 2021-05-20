@@ -1,18 +1,16 @@
+from json import load
 import pandas as pd
 import numpy as np
 from matplotlib.path import Path as PolygonPath
 from pathlib import Path
 from collections import defaultdict
 from tqdm import tqdm
+import multiprocessing
+from joblib import Parallel, delayed
 
 from typing import List, Tuple
 
-IMAGE_SIZES = {
-    'Modesto': (5000, 5000),
-    'Fresno': (5000, 5000),
-    'Oxnard': (4000, 6000),
-    'Stockton': (5000, 5000)
-}
+IMAGE_SIZES = {'Modesto': (5000, 5000), 'Fresno': (5000, 5000), 'Oxnard': (4000, 6000), 'Stockton': (5000, 5000)}
 
 
 class MaskMaker:
@@ -25,21 +23,19 @@ class MaskMaker:
             Path of the data folder, which should be set up as described in `data/README.md`
     """
 
-    def __init__(self, data_folder: Path = Path('data')) -> None:
+    def __init__(self, data_folder: Path = Path('data'), num_jobs: int = 16) -> None:
         self.data_folder = data_folder
+        self.num_jobs = num_jobs
 
     def _read_data(self) -> Tuple[defaultdict, dict]:
         metadata_folder = self.data_folder / 'metadata'
 
         polygon_pixels = self._csv_to_dict_polygon_pixels(
-            pd.read_csv(metadata_folder / 'polygonVertices_PixelCoordinates.csv')
-        )
+            pd.read_csv(metadata_folder / 'polygonVertices_PixelCoordinates.csv'))
         # TODO: potentially filter on jaccard index
         polygon_images = self._csv_to_dict_image_names(
             pd.read_csv(metadata_folder / 'polygonDataExceptVertices.csv',
-                        usecols=['polygon_id', 'city', 'image_name', 'jaccard_index']
-                        )
-        )
+                        usecols=['polygon_id', 'city', 'image_name', 'jaccard_index']))
         return polygon_images, polygon_pixels
 
     def process(self) -> None:
@@ -52,14 +48,31 @@ class MaskMaker:
             # we make it
             masked_city = self.data_folder / f"{city}_masks"
             x_size, y_size = IMAGE_SIZES[city]
-            if not masked_city.exists(): masked_city.mkdir()
+            if not masked_city.exists():
+                masked_city.mkdir()
 
-            for image, polygons in tqdm(files.items()):
+            def _process_jobs(image, polygons):
+                destination = masked_city / f"{image}.npy"
+                if destination.exists():
+                    try:
+                        existing = np.load(destination)
+                        assert existing.shape == (x_size, y_size)
+                        return
+                    except Exception as e:
+                        print(f"WARNING: error on image '{image}': {str(e)}")
+                print("Redoing the masking process for '{image}'")
                 mask = np.zeros((x_size, y_size))
                 for polygon in polygons:
                     mask += self.make_mask(polygon_pixels[polygon], (x_size, y_size))
-
                 np.save(masked_city / f"{image}.npy", mask)
+
+            Parallel(n_jobs=self.num_jobs)(delayed(_process_jobs)(image, poly) for image, poly in tqdm(files.items()))
+            # for image, polygons in tqdm(files.items()):
+            #     mask = np.zeros((x_size, y_size))
+            #     for polygon in polygons:
+            #         mask += self.make_mask(polygon_pixels[polygon], (x_size, y_size))
+
+            #     np.save(masked_city / f"{image}.npy", mask)
 
     @staticmethod
     def _csv_to_dict_polygon_pixels(polygon_pixels: pd.DataFrame) -> dict:
@@ -77,7 +90,7 @@ class MaskMaker:
         output_dict: defaultdict = defaultdict(lambda: defaultdict(list))
 
         for idx, row in polygon_images.iterrows():
-                output_dict[row.city][row.image_name].append(int(row.polygon_id))
+            output_dict[row.city][row.image_name].append(int(row.polygon_id))
         return output_dict
 
     @staticmethod

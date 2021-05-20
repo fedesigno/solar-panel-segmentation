@@ -4,6 +4,9 @@ from torch.utils.data import DataLoader
 import numpy as np
 from pathlib import Path
 from tqdm import tqdm
+from collections import OrderedDict
+from sklearn.metrics import f1_score, jaccard_score, precision_score, recall_score, accuracy_score
+from matplotlib import pyplot as plt
 
 from solarnet.preprocessing import MaskMaker, ImageSplitter
 from solarnet.datasets import ClassifierDataset, SegmenterDataset, make_masks
@@ -46,8 +49,12 @@ class RunTask:
         splitter.process(imsize=imsize, empty_ratio=empty_ratio)
 
     @staticmethod
-    def train_classifier(max_epochs=100, warmup=2, patience=5, val_size=0.1,
-                         test_size=0.1, data_folder='data',
+    def train_classifier(max_epochs=100,
+                         warmup=2,
+                         patience=5,
+                         val_size=0.1,
+                         test_size=0.1,
+                         data_folder='data',
                          device=torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')):
         """Train the classifier
 
@@ -73,7 +80,8 @@ class RunTask:
         data_folder = Path(data_folder)
 
         model = Classifier()
-        if device.type != 'cpu': model = model.cuda()
+        if device.type != 'cpu':
+            model = model.cuda()
 
         processed_folder = data_folder / 'processed'
         dataset = ClassifierDataset(processed_folder=processed_folder)
@@ -86,17 +94,23 @@ class RunTask:
         val_dataloader = DataLoader(ClassifierDataset(mask=val_mask,
                                                       processed_folder=processed_folder,
                                                       transform_images=False),
-                                    batch_size=64, shuffle=True)
+                                    batch_size=64,
+                                    shuffle=True)
         test_dataloader = DataLoader(ClassifierDataset(mask=test_mask,
                                                        processed_folder=processed_folder,
                                                        transform_images=False),
                                      batch_size=64)
 
-        train_classifier(model, train_dataloader, val_dataloader, max_epochs=max_epochs,
-                         warmup=warmup, patience=patience)
+        train_classifier(model,
+                         train_dataloader,
+                         val_dataloader,
+                         max_epochs=max_epochs,
+                         warmup=warmup,
+                         patience=patience)
 
         savedir = data_folder / 'models'
-        if not savedir.exists(): savedir.mkdir()
+        if not savedir.exists():
+            savedir.mkdir()
         torch.save(model.state_dict(), savedir / 'classifier.model')
 
         # save predictions for analysis
@@ -112,8 +126,13 @@ class RunTask:
         np.save(savedir / 'classifier_true.npy', np.concatenate(true))
 
     @staticmethod
-    def train_segmenter(max_epochs=100, val_size=0.1, test_size=0.1, warmup=2,
-                        patience=5, data_folder='data', use_classifier=True,
+    def train_segmenter(max_epochs=100,
+                        val_size=0.1,
+                        test_size=0.1,
+                        warmup=2,
+                        patience=5,
+                        data_folder='data',
+                        use_classifier=True,
                         device=torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')):
         """Train the segmentation model
 
@@ -142,7 +161,8 @@ class RunTask:
         """
         data_folder = Path(data_folder)
         model = Segmenter()
-        if device.type != 'cpu': model = model.cuda()
+        if device.type != 'cpu':
+            model = model.cuda()
 
         model_dir = data_folder / 'models'
         if use_classifier:
@@ -157,16 +177,22 @@ class RunTask:
         val_dataloader = DataLoader(SegmenterDataset(mask=val_mask,
                                                      processed_folder=processed_folder,
                                                      transform_images=False),
-                                    batch_size=64, shuffle=True)
+                                    batch_size=64,
+                                    shuffle=True)
         test_dataloader = DataLoader(SegmenterDataset(mask=test_mask,
                                                       processed_folder=processed_folder,
                                                       transform_images=False),
                                      batch_size=64)
 
-        train_segmenter(model, train_dataloader, val_dataloader, max_epochs=max_epochs,
-                        warmup=warmup, patience=patience)
+        train_segmenter(model,
+                        train_dataloader,
+                        val_dataloader,
+                        max_epochs=max_epochs,
+                        warmup=warmup,
+                        patience=patience)
 
-        if not model_dir.exists(): model_dir.mkdir()
+        if not model_dir.exists():
+            model_dir.mkdir()
         torch.save(model.state_dict(), model_dir / 'segmenter.model')
 
         print("Generating test results")
@@ -182,16 +208,65 @@ class RunTask:
         np.save(model_dir / 'segmenter_preds.npy', np.concatenate(preds))
         np.save(model_dir / 'segmenter_true.npy', np.concatenate(true))
 
-    def train_both(self, c_max_epochs=100, c_warmup=2, c_patience=5, c_val_size=0.1,
-                   c_test_size=0.1, s_max_epochs=100, s_warmup=2, s_patience=5,
-                   s_val_size=0.1, s_test_size=0.1, data_folder='data',
+    def train_both(self,
+                   c_max_epochs=100,
+                   c_warmup=2,
+                   c_patience=5,
+                   c_val_size=0.1,
+                   c_test_size=0.1,
+                   s_max_epochs=100,
+                   s_warmup=2,
+                   s_patience=5,
+                   s_val_size=0.1,
+                   s_test_size=0.1,
+                   data_folder='data',
                    device=torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')):
         """Train the classifier, and use it to train the segmentation model.
         """
         data_folder = Path(data_folder)
-        self.train_classifier(max_epochs=c_max_epochs, val_size=c_val_size, test_size=c_test_size,
-                              warmup=c_warmup, patience=c_patience, data_folder=data_folder,
+        self.train_classifier(max_epochs=c_max_epochs,
+                              val_size=c_val_size,
+                              test_size=c_test_size,
+                              warmup=c_warmup,
+                              patience=c_patience,
+                              data_folder=data_folder,
                               device=device)
-        self.train_segmenter(max_epochs=s_max_epochs, val_size=s_val_size, test_size=s_test_size,
-                             warmup=s_warmup, patience=s_patience, use_classifier=True,
-                             data_folder=data_folder, device=device)
+        self.train_segmenter(max_epochs=s_max_epochs,
+                             val_size=s_val_size,
+                             test_size=s_test_size,
+                             warmup=s_warmup,
+                             patience=s_patience,
+                             use_classifier=True,
+                             data_folder=data_folder,
+                             device=device)
+
+    @staticmethod
+    def test_segmenter(data_folder="data", results_folder="data/results", store_predictions: bool = True):
+        data_folder = Path(data_folder)
+        results_folder = Path(results_folder)
+        model_dir = data_folder / 'models'
+        images = np.load(model_dir / "segmenter_images.npy")
+        preds = np.load(model_dir / "segmenter_preds.npy")
+        target = np.load(model_dir / "segmenter_true.npy")
+        metrics_fn = OrderedDict([("f1", f1_score), ("iou", jaccard_score), ("accuracy", accuracy_score),
+                                  ("precision", precision_score), ("recall", recall_score)])
+
+        num_images = images.shape[0]
+        num_metrics = len(metrics_fn)
+
+        metrics = np.zeros((num_images, num_metrics))
+        preds = (preds > 0.5).astype(np.int)  # a bit arbitrary, but should make sense
+        target = target.astype(np.int)
+
+        for i in tqdm(range(num_images)):
+            y_true = target[i].flatten()
+            y_pred = preds[i].flatten()
+            for j, score_fn in enumerate(metrics_fn.values()):
+                metrics[i, j] = score_fn(y_true, y_pred)
+            if store_predictions:
+                plt.imsave(results_folder / f"{i:06d}_true.png", target[i])
+                plt.imsave(results_folder / f"{i:06d}_pred.png", preds[i])
+
+        mean_metrics = metrics.mean(axis=0)
+        for i, name in enumerate(metrics_fn.keys()):
+            print(f"{name:<20s}: {mean_metrics[i]:.4f}")
