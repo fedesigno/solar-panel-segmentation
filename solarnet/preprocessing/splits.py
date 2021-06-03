@@ -1,4 +1,5 @@
 import numpy as np
+import tifffile as tif
 from numpy.random import randint
 import pandas as pd
 from collections import defaultdict
@@ -29,7 +30,8 @@ class ImageSplitter:
 
         # setup; make the necessary folders
         self.processed_folder = data_folder / 'processed'
-        if not self.processed_folder.exists(): self.processed_folder.mkdir()
+        if not self.processed_folder.exists():
+            self.processed_folder.mkdir()
 
         self.solar_panels = self._setup_folder('solar')
         self.empty = self._setup_folder('empty')
@@ -37,19 +39,20 @@ class ImageSplitter:
     def _setup_folder(self, folder_name: str) -> Path:
 
         full_folder_path = self.processed_folder / folder_name
-        if not full_folder_path.exists(): full_folder_path.mkdir()
+        if not full_folder_path.exists():
+            full_folder_path.mkdir()
 
         for subfolder in ['org', 'mask']:
             subfolder_name = full_folder_path / subfolder
-            if not subfolder_name.exists(): subfolder_name.mkdir()
+            if not subfolder_name.exists():
+                subfolder_name.mkdir()
 
         return full_folder_path
 
     def read_centroids(self) -> defaultdict:
 
         metadata = pd.read_csv(self.data_folder / 'metadata/polygonDataExceptVertices.csv',
-                               usecols=['city', 'image_name', 'centroid_latitude_pixels',
-                                        'centroid_longitude_pixels'])
+                               usecols=['city', 'image_name', 'centroid_latitude_pixels', 'centroid_longitude_pixels'])
         org_len = len(metadata)
         metadata = metadata.dropna()
         print(f'Dropped {org_len - len(metadata)} rows due to NaN values')
@@ -58,22 +61,24 @@ class ImageSplitter:
         output_dict: defaultdict = defaultdict(lambda: defaultdict(set))
 
         for idx, row in metadata.iterrows():
-            output_dict[row.city][row.image_name].add((
-                row.centroid_latitude_pixels, row.centroid_longitude_pixels
-            ))
+            output_dict[row.city][row.image_name].add((row.centroid_latitude_pixels, row.centroid_longitude_pixels))
         return output_dict
 
     @staticmethod
-    def adjust_coords(coords: Tuple[float, float], image_radius: int,
-                      org_imsize: Tuple[int, int]) -> Tuple[float, float]:
+    def adjust_coords(coords: Tuple[float, float], image_radius: int, org_imsize: Tuple[int,
+                                                                                        int]) -> Tuple[float, float]:
         x_imsize, y_imsize = org_imsize
         x, y = coords
         # we make sure that the centroid isn't at the edge of the image
-        if x < image_radius: x = image_radius
-        elif x > (x_imsize - image_radius): x = x_imsize - image_radius
+        if x < image_radius:
+            x = image_radius
+        elif x > (x_imsize - image_radius):
+            x = x_imsize - image_radius
 
-        if y < image_radius: y = image_radius
-        elif y > (y_imsize - image_radius): y = y_imsize - image_radius
+        if y < image_radius:
+            y = image_radius
+        elif y > (y_imsize - image_radius):
+            y = y_imsize - image_radius
         return x, y
 
     @staticmethod
@@ -82,7 +87,7 @@ class ImageSplitter:
             return True
         return False
 
-    def process(self, imsize: int=224, empty_ratio: int=2) -> None:
+    def process(self, imsize: int = 224, empty_ratio: int = 2) -> None:
         """Creates the solar and empty images, and their corresponding masks
 
         Parameters
@@ -111,10 +116,9 @@ class ImageSplitter:
 
                 org_x_imsize, org_y_imsize = IMAGE_SIZES[city]
                 if org_file.shape != (3, org_x_imsize, org_y_imsize):
-                    print(f'{city}/{image_name}.tif is malformed with shape {org_file.shape}. '
-                          f'Skipping!')
+                    print(f'{city}/{image_name}.tif is malformed with shape {org_file.shape}. ' f'Skipping!')
                     continue
-                mask_file = np.load(self.data_folder / f"{city}_masks/{image_name}.npy")
+                mask_file = tif.imread(self.data_folder / f"{city}_masks/{image_name}.tif")
 
                 # first, lets collect the positive examples
                 for centroid in centroids:
@@ -122,12 +126,12 @@ class ImageSplitter:
                     max_width, max_height = int(x + image_radius), int(y + image_radius)
                     min_width, min_height = max_width - imsize, max_height - imsize
 
-                    clipped_orgfile = org_file[:, min_width: max_width, min_height: max_height]
-                    mask = mask_file[min_width: max_width, min_height: max_height]
+                    clipped_orgfile = org_file[:, min_width:max_width, min_height:max_height]
+                    mask = mask_file[min_width:max_width, min_height:max_height]
 
                     if self.size_okay(clipped_orgfile, imsize):
-                        np.save(self.solar_panels / f"org/{city}_{im_idx}.npy", clipped_orgfile)
-                        np.save(self.solar_panels / f"mask/{city}_{im_idx}.npy", mask)
+                        tif.imsave(self.solar_panels / f"org/{city}_{im_idx}.tif", clipped_orgfile)
+                        tif.imsave(self.solar_panels / f"mask/{city}_{im_idx}.tif", mask.astype(float))
 
                         im_idx += 1
 
@@ -142,15 +146,14 @@ class ImageSplitter:
                     rand_y = randint(0, org_y_imsize - imsize)
                     rand_x_max, rand_y_max = rand_x + imsize, rand_y + imsize
                     # this makes sure no solar panel is present
-                    mask_candidate = mask_file[rand_x: rand_x_max, rand_y: rand_y_max]
+                    mask_candidate = mask_file[rand_x:rand_x_max, rand_y:rand_y_max]
 
                     if mask_candidate.sum() == 0:
-                        clipped_orgfile = org_file[:, rand_x: rand_x_max, rand_y: rand_y_max]
+                        clipped_orgfile = org_file[:, rand_x:rand_x_max, rand_y:rand_y_max]
                         if self.size_okay(clipped_orgfile, imsize):
-                            np.save(self.empty / f"org/{city}_{im_idx}.npy",
-                                    org_file[:, rand_x: rand_x_max, rand_y: rand_y_max])
-                            np.save(self.empty / f"mask/{city}_{im_idx}.npy",
-                                    mask_candidate)
+                            tif.imsave(self.empty / f"org/{city}_{im_idx}.tif", org_file[:, rand_x:rand_x_max,
+                                                                                         rand_y:rand_y_max])
+                            tif.imsave(self.empty / f"mask/{city}_{im_idx}.tif", mask_candidate)
                             im_idx += 1
                             num_empty += 1
                     else:

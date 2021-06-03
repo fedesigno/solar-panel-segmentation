@@ -1,6 +1,8 @@
 import torch
 from torch import nn
-from torchvision.models import resnet34
+from torchvision.models import resnet34, resnet50, resnet101
+
+backbones = {"resnet34": resnet34, "resnet50": resnet50, "resnet101": resnet101}
 
 
 class ResnetBase(nn.Module):
@@ -11,10 +13,15 @@ class ResnetBase(nn.Module):
         imagenet_base: boolean, default: True
             Whether or not to load weights pretrained on imagenet
     """
-    def __init__(self, imagenet_base: bool = True) -> None:
-        super().__init__()
 
-        resnet = resnet34(pretrained=imagenet_base).float()
+    def __init__(self, version: str = "resnet50", imagenet_base: bool = True) -> None:
+        super().__init__()
+        try:
+            backbone_fn = backbones[version]
+        except KeyError as e:
+            ValueError(f"Error while looking for the backbone '{version}': {str(e)}")
+
+        resnet = backbone_fn(pretrained=imagenet_base).float()
         self.pretrained = nn.Sequential(*list(resnet.children())[:-2])
 
     def forward(self, x):

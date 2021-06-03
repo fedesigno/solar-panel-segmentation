@@ -1,34 +1,21 @@
-import numpy as np
 import torch
+import numpy as np
+from PIL import Image
 from pathlib import Path
-import random
-
-from typing import Optional, List, Tuple
-
-from .utils import normalize
-from .transforms import no_change, horizontal_flip, vertical_flip, colour_jitter
+from typing import Callable, Optional, List, Tuple
 
 
-class ClassifierDataset:
+class USGSClassifierDataset:
 
-    def __init__(self,
-                 processed_folder: Path=Path('data/processed'),
-                 normalize: bool = True, transform_images: bool = False,
-                 device: torch.device = torch.device('cuda:0' if
-                                                     torch.cuda.is_available() else 'cpu'),
-                 mask: Optional[List[bool]] = None) -> None:
-
-        self.device = device
-        self.normalize = normalize
-        self.transform_images = transform_images
-
-        solar_files = list((processed_folder / 'solar/org').glob("*.npy"))
-        empty_files = list((processed_folder / 'empty/org').glob("*.npy"))
-
-        self.y = torch.as_tensor([1 for _ in solar_files] + [0 for _ in empty_files],
-                                 device=self.device).float()
+    def __init__(self, data_folder: Path, transform: Callable = None, mask: Optional[List[bool]] = None) -> None:
+        self.transform = transform
+        solar_files = list((data_folder / "solar" / "org").glob("*.tif"))
+        empty_files = list((data_folder / "empty" / "org").glob("*.tif"))
+        assert len(solar_files) > 0, "No images containing solar panels found!"
+        assert len(empty_files) > 0, "No images without solar panels found!"
+        # set 0 if image belongs to empty files, else 1, this is the clf ground truth
+        self.y = torch.as_tensor([1 for _ in solar_files] + [0 for _ in empty_files]).float()
         self.x_files = solar_files + empty_files
-
         if mask is not None:
             self.add_mask(mask)
 
@@ -43,19 +30,10 @@ class ClassifierDataset:
     def __len__(self) -> int:
         return self.y.shape[0]
 
-    def _transform_images(self, image: np.ndarray) -> np.ndarray:
-        transforms = [
-            no_change,
-            horizontal_flip,
-            vertical_flip,
-            colour_jitter,
-        ]
-        chosen_function = random.choice(transforms)
-        return chosen_function(image)
-
     def __getitem__(self, index: int) -> Tuple[torch.Tensor, torch.Tensor]:
         y = self.y[index]
-        x = np.load(self.x_files[index])
-        if self.transform_images: x = self._transform_images(x)
-        if self.normalize: x = normalize(x)
-        return torch.as_tensor(x.copy(), device=self.device).float(), y
+        # read channels last
+        x = np.array(Image.open(self.x_files[index]))
+        if self.transform:
+            x = self.transform(image=x)["image"]
+        return x, y

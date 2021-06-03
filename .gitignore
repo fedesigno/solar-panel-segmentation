@@ -1,9 +1,20 @@
-*.pyc
-*.npy
-.DS_Store
-*.zip
-*.env
-env/
-__pycache__/
+# IDE
 .vscode
 .idea
+.DS_Store
+
+# Python cache
+*.pyc
+__pycache__/
+
+# environment
+*.env
+env/
+.venv/
+
+# other
+logs/
+models/
+*.npy
+*.tif
+*.zip

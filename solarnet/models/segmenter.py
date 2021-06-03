@@ -23,11 +23,11 @@ class Segmenter(ResnetBase):
 
         self.relu = nn.ReLU()
         self.upsamples = nn.ModuleList([
-            UpBlock(512, 256, 256),
-            UpBlock(256, 128, 256),
-            UpBlock(256, 64, 256),
-            UpBlock(256, 64, 256),
-            UpBlock(256, 3, 16),
+            UpBlock(2048, 1024, 512),
+            UpBlock(512, 512, 256),
+            UpBlock(256, 256, 64),
+            UpBlock(64, 64, 32),
+            UpBlock(32, 3, 16),
         ])
         self.conv_transpose = nn.ConvTranspose2d(16, 1, 1)
         self.sigmoid = nn.Sigmoid()
@@ -54,9 +54,12 @@ class Segmenter(ResnetBase):
             if name in self.target_modules:
                 # allows the method to be safely called even if
                 # the hooks aren't there
-                try: del child.output
-                except AttributeError: continue
-        for hook in self.hooks: hook.remove()
+                try:
+                    del child.output
+                except AttributeError:
+                    continue
+        for hook in self.hooks:
+            hook.remove()
 
     @staticmethod
     def save_output(module, input, output):
@@ -83,15 +86,19 @@ class Segmenter(ResnetBase):
 
 
 class UpBlock(nn.Module):
-    def __init__(self, in_channels: int, across_channels: int,
-                 out_channels: int) -> None:
+
+    def __init__(self, in_channels: int, across_channels: int, out_channels: int) -> None:
         super().__init__()
         up_out = across_out = out_channels // 2
         self.conv_across = nn.Conv2d(across_channels, across_out, 1)
-        self.conv_transpose = nn.ConvTranspose2d(in_channels, up_out, 2, stride=2)
+        # alternative: ConvTranspose2d(in_channels, up_out, 2, stride=2)
+        self.upsample = nn.Sequential(nn.Upsample(scale_factor=2, mode="bilinear", align_corners=True),
+                                      nn.Conv2d(in_channels, up_out, kernel_size=1))
         self.batchnorm = nn.BatchNorm2d(out_channels)
         self.relu = nn.ReLU()
 
     def forward(self, x_up, x_across):
-        joint = torch.cat((self.conv_transpose(x_up), self.conv_across(x_across)), dim=1)
+        upsampled = self.upsample(x_up)
+        skipped = self.conv_across(x_across)
+        joint = torch.cat((upsampled, skipped), dim=1)
         return self.batchnorm(self.relu(joint))

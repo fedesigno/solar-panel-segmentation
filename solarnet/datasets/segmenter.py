@@ -1,38 +1,33 @@
 import numpy as np
+import tifffile as tif
 import torch
 from pathlib import Path
 import random
 
-from typing import Optional, List, Tuple
-
-from .utils import normalize
-from .transforms import no_change, horizontal_flip, vertical_flip, colour_jitter
+from torch.utils.data import Dataset
+from typing import Callable, Optional, List, Tuple
 
 
-class SegmenterDataset:
-    def __init__(self,
-                 processed_folder: Path = Path('data/processed'),
-                 normalize: bool = True, transform_images: bool = True,
-                 device: torch.device = torch.device('cuda:0' if
-                                                     torch.cuda.is_available() else 'cpu'),
-                 mask: Optional[List[bool]] = None) -> None:
+class USGSSegmentationDataset:
 
-        self.device = device
-        self.normalize = normalize
-        self.transform_images = transform_images
+    def __init__(self, data_folder: Path, transform: Callable = None, mask: Optional[List[bool]] = None) -> None:
+        self.transform = transform
 
         # We will only segment the images which we know have solar panels in them; the
         # other images should be filtered out by the classifier
-        solar_folder = processed_folder / 'solar'
-
-        self.org_solar_files = list((solar_folder / 'org').glob("*.npy"))
+        solar_folder = data_folder / 'solar'
+        self.org_solar_files = list((solar_folder / 'org').glob("*.tif"))
         self.mask_solar_files = [solar_folder / 'mask' / f.name for f in self.org_solar_files]
-
+        assert len(self.org_solar_files) > 0, "No images found!"
+        assert len(self.org_solar_files) == len(self.mask_solar_files), "Length mismatch between images and masks!"
         if mask is not None:
             self.add_mask(mask)
 
     def add_mask(self, mask: List[bool]) -> None:
-        """Add a mask to the data
+        """Filters out files and masks not required for the current dataset split.add()
+
+        Args:
+            mask (List[bool]): list of bollean values, one for each tile, to decide whether to keep it or not.
         """
         assert len(mask) == len(self.org_solar_files), \
             f"Mask is the wrong size! Expected {len(self.org_solar_files)}, got {len(mask)}"
@@ -42,22 +37,41 @@ class SegmenterDataset:
     def __len__(self) -> int:
         return len(self.org_solar_files)
 
-    def _transform_images(self, image: np.ndarray,
-                          mask: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        transforms = [
-            no_change,
-            horizontal_flip,
-            vertical_flip,
-            colour_jitter,
-        ]
-        chosen_function = random.choice(transforms)
-        return chosen_function(image, mask)
+    def __getitem__(self, index: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        x = tif.imread(self.org_solar_files[index]).transpose(1, 2, 0)
+        y = tif.imread(self.mask_solar_files[index])
+        if self.transform is not None:
+            pair = self.transform(image=x, mask=y)
+            x = pair.get("image")
+            y = pair.get("mask")
+        return x, y
+
+
+class DydasSegmentationDataset(Dataset):
+
+    def __init__(
+        self,
+        data_folder: Path,
+        transform: Callable = True,
+    ) -> None:
+        self.transform = transform
+        # find images and masks inside the specified folder
+        self.solar_files = sorted(list(data_folder.glob("*_rgbir.tif")))
+        self.mask_files = sorted(list(data_folder.glob("*_bin.tif")))
+        # check consistency
+        assert len(self.solar_files) == len(self.mask_files), "Images and masks mismatch!"
+        for img_path, msk_path in zip(self.solar_files, self.mask_files):
+            assert img_path.stem.replace("_rgbir", "") == msk_path.stem.replace("_bin", ""), \
+                f"Image and mask mismatch: '{img_path.stem}' - '{msk_path.stem}'"
 
     def __getitem__(self, index: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        x = tif.imread(self.solar_files[index]).astype(np.float32)[:3]
+        y = tif.imread(self.mask_files[index]).astype(np.float32) / 255.0
+        if self.transform is not None:
+            pair = self.transform(image=x, mask=y)
+            x = pair.get("image")
+            y = pair.get("mask")
+        return x, y
 
-        x = np.load(self.org_solar_files[index])
-        y = np.load(self.mask_solar_files[index])
-        if self.transform_images: x, y = self._transform_images(x, y)
-        if self.normalize: x = normalize(x)
-        return torch.as_tensor(x.copy(), device=self.device).float(), \
-            torch.as_tensor(y.copy(), device=self.device).float()
+    def __len__(self) -> int:
+        return len(self.solar_files)

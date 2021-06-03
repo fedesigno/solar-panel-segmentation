@@ -1,6 +1,7 @@
 from json import load
 import pandas as pd
 import numpy as np
+import tifffile as tif
 from matplotlib.path import Path as PolygonPath
 from pathlib import Path
 from collections import defaultdict
@@ -52,27 +53,20 @@ class MaskMaker:
                 masked_city.mkdir()
 
             def _process_jobs(image, polygons):
-                destination = masked_city / f"{image}.npy"
+                destination = masked_city / f"{image}.tif"
                 if destination.exists():
                     try:
-                        existing = np.load(destination)
+                        existing = tif.imread(destination)
                         assert existing.shape == (x_size, y_size)
                         return
-                    except Exception as e:
-                        print(f"WARNING: error on image '{image}': {str(e)}")
-                print("Redoing the masking process for '{image}'")
+                    except Exception:
+                        pass
                 mask = np.zeros((x_size, y_size))
                 for polygon in polygons:
                     mask += self.make_mask(polygon_pixels[polygon], (x_size, y_size))
-                np.save(masked_city / f"{image}.npy", mask)
+                tif.imsave(masked_city / f"{image}.tif", mask)
 
             Parallel(n_jobs=self.num_jobs)(delayed(_process_jobs)(image, poly) for image, poly in tqdm(files.items()))
-            # for image, polygons in tqdm(files.items()):
-            #     mask = np.zeros((x_size, y_size))
-            #     for polygon in polygons:
-            #         mask += self.make_mask(polygon_pixels[polygon], (x_size, y_size))
-
-            #     np.save(masked_city / f"{image}.npy", mask)
 
     @staticmethod
     def _csv_to_dict_polygon_pixels(polygon_pixels: pd.DataFrame) -> dict:

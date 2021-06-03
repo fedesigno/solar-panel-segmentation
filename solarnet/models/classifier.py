@@ -12,14 +12,11 @@ class Classifier(ResnetBase):
             Whether or not to load weights pretrained on imagenet
     """
 
-    def __init__(self, imagenet_base: bool = True) -> None:
-        super().__init__(imagenet_base=imagenet_base)
+    def __init__(self, imagenet_base: bool = True, backbone: str = "resnet50") -> None:
+        super().__init__(imagenet_base=imagenet_base, version=backbone)
 
-        self.avgpool = nn.AvgPool2d(7, stride=1)
-        self.classifier = nn.Sequential(
-            nn.Linear(512, 1),
-            nn.Sigmoid()
-        )
+        self.avgpool = nn.AvgPool2d(8, stride=1)
+        self.classifier = nn.Sequential(nn.Linear(2048, 1), nn.Sigmoid())
 
     def forward(self, x):
         x = self.pretrained(x)
