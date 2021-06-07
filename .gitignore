@@ -14,7 +14,7 @@ env/
 
 # other
 logs/
-models/
+*.pth
 *.npy
 *.tif
 *.zip
